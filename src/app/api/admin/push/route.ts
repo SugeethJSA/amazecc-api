@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDbPool } from '@/lib/db';
 import webpush from 'web-push';
+import { isAdminAuthenticated } from '@/lib/auth';
 
 
 
@@ -34,6 +35,10 @@ import webpush from 'web-push';
 
 export async function POST(req: NextRequest) {
     try {
+        if (!(await isAdminAuthenticated())) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const body = await req.json();
         const { title, body: message } = body;
 

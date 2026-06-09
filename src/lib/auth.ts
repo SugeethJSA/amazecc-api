@@ -63,11 +63,16 @@ export function verifyAdminToken(token: string): string | null {
     }
 }
 
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 
 export async function isAdminAuthenticated(): Promise<boolean> {
     const cookieStore = await cookies();
     const token = cookieStore.get('admin_token')?.value;
-    if (!token) return false;
-    return verifyAdminToken(token) !== null;
+    if (token && verifyAdminToken(token) !== null) return true;
+
+    const headersList = await headers();
+    const authHeader = headersList.get('authorization');
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+    return bearerToken ? verifyAdminToken(bearerToken) !== null : false;
 }

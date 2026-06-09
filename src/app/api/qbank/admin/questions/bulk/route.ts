@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { getDbPool } from '@/lib/db';
-import { cookies } from 'next/headers';
+import { isAdminAuthenticated } from '@/lib/auth';
 
 
 
@@ -41,8 +41,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const cookieStore = await cookies();
-    if (cookieStore.get('admin_auth')?.value !== 'true') {
+    if (!(await isAdminAuthenticated())) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
