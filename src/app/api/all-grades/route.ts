@@ -5,6 +5,26 @@ import { URLSearchParams } from "url";
 import { RequestBody } from "@/types/custom";
 import { GradeItem, GradeResultsMap } from "@/types/data/allgrades";
 
+async function batchAll<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  concurrency: number
+): Promise<R[]> {
+  const results: R[] = [];
+  let index = 0;
+
+  async function worker() {
+    while (index < items.length) {
+      const i = index++;
+      results[i] = await fn(items[i]);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 
 
 
@@ -123,27 +143,31 @@ export async function POST(req: Request) {
                     }
                 }
 
-                const detailTable = $$$("table.table-striped")
-                    .filter((_, el) => $$$(el).text().includes("Mark Title"))
-                    .first();
+                const detailTables = $$$("table.table-striped")
+                    .filter((_, el) => $$$(el).text().includes("Mark Title"));
 
                 const breakdown: any[] = [];
 
-                detailTable.find("tr").slice(2, -1).each((_, row) => {
-                    const tds = $$$(row).find("td, output");
-                    if (tds.length < 7) return;
+                detailTables.each((tIndex, tableEl) => {
+                    const type = tIndex === 0 ? "Theory" : tIndex === 1 ? "Lab" : `Component ${tIndex + 1}`;
+                    
+                    $$$(tableEl).find("tr").slice(2, -1).each((_, row) => {
+                        const tds = $$$(row).find("td, output");
+                        if (tds.length < 7) return;
 
-                    const clean = (i: number) =>
-                        $$$(tds[i]).text().replace(/\s+/g, " ").trim();
+                        const clean = (i: number) =>
+                            $$$(tds[i]).text().replace(/\s+/g, " ").trim();
 
-                    breakdown.push({
-                        slNo: clean(0),
-                        component: clean(2),
-                        maxMark: clean(4),
-                        weightagePercent: clean(6),
-                        status: clean(8),
-                        scoredMark: clean(10),
-                        weightageMark: clean(12),
+                        breakdown.push({
+                            slNo: clean(0),
+                            component: clean(2),
+                            maxMark: clean(4),
+                            weightagePercent: clean(6),
+                            status: clean(8),
+                            scoredMark: clean(10),
+                            weightageMark: clean(12),
+                            type: type
+                        });
                     });
                 });
 
@@ -215,7 +239,7 @@ export async function POST(req: Request) {
                     });
                 });
 
-                const detailed = await Promise.all(grades.map((g) => fetchGradeDetail(g, semId)));
+                const detailed = await batchAll(grades, (g) => fetchGradeDetail(g, semId), 3);
 
                 return { gpa, grades: detailed };
             } catch (err) {
@@ -224,7 +248,7 @@ export async function POST(req: Request) {
             }
         }
 
-        const resultsArray = await Promise.all(semesters.map(fetchSemester));
+        const resultsArray = await batchAll(semesters, fetchSemester, 3);
 
         const output: GradeResultsMap = {};
         semesters.forEach((semId, i) => {
@@ -235,7 +259,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ grades: output }, { status: 200 });
     } catch (err: any) {
         console.error(err);
-        return NextResponse.json({ error: err.message }, { status: 500 });
+        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }
 

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDbPool } from '@/lib/db';
+import { requireAdminAuth } from '@/lib/auth';
+import { checkRateLimit, rateLimitResponse, getClientIp } from '@/lib/rateLimit';
 
 
 
@@ -59,7 +61,14 @@ export const dynamic = 'force-dynamic';
  *       500:
  *         description: Migration failed or DATABASE_URL not set
  */
-export async function POST() {
+export async function POST(req: Request) {
+  const authResult = await requireAdminAuth(req);
+  if (authResult instanceof NextResponse) return authResult;
+
+  const ip = getClientIp(req);
+  const rl = checkRateLimit(`migrate:${ip}`, 3, 300000);
+  if (!rl.allowed) return rateLimitResponse(rl.retryAfterMs);
+
   try {
     const pool = getDbPool();
 
@@ -168,14 +177,95 @@ export async function POST() {
         topic_id UUID REFERENCES qbank_topics(topic_id) ON DELETE CASCADE,
         PRIMARY KEY(question_id, topic_id)
       );
+
+      -- Consolidated buses table (replaces bus_routes, bus_stops, bus_placements, old buses)
+      CREATE TABLE IF NOT EXISTS buses_v2 (
+        id SERIAL PRIMARY KEY,
+        route_number VARCHAR(10) NOT NULL UNIQUE,
+        route_name VARCHAR(255) NOT NULL,
+        type VARCHAR(10) NOT NULL CHECK (type IN ('AC', 'Non-AC')),
+        driver_name VARCHAR(100) DEFAULT '',
+        driver_phone VARCHAR(50) DEFAULT '',
+        whatsapp_group TEXT DEFAULT '',
+        bus_location TEXT DEFAULT '',
+        supervisor_name VARCHAR(100) DEFAULT '',
+        supervisor_phone VARCHAR(50) DEFAULT '',
+        driver_incharge_name VARCHAR(100) DEFAULT '',
+        driver_incharge_phone VARCHAR(50) DEFAULT '',
+        stops JSONB DEFAULT '[]'::jsonb,
+        placements JSONB DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      );
+
+      -- Transport rules (separate — not bus-specific)
+      CREATE TABLE IF NOT EXISTS transport_rules (
+        id SERIAL PRIMARY KEY,
+        rule_number INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      );
+
+      -- Admin users table
+      CREATE TABLE IF NOT EXISTS admin_users (
+        username TEXT PRIMARY KEY,
+        role TEXT DEFAULT 'admin' CHECK (role IN ('superadmin', 'admin')),
+        permissions JSONB DEFAULT '["dashboard","qbank","buses","push"]',
+        added_by TEXT,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+
+      -- Fresher resources table
+      CREATE TABLE IF NOT EXISTS fresher_resources (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        url TEXT,
+        icon TEXT DEFAULT 'ExternalLink',
+        sort_order INT DEFAULT 0,
+        is_active BOOLEAN DEFAULT TRUE,
+        type TEXT DEFAULT 'link' CHECK (type IN ('link', 'text', 'md')),
+        content TEXT DEFAULT '',
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      );
+
+      -- Add driver_incharge columns to buses_v2 if they don't exist
+      DO $$ BEGIN
+        ALTER TABLE buses_v2 ADD COLUMN IF NOT EXISTS driver_incharge_name VARCHAR(100) DEFAULT '';
+      EXCEPTION WHEN duplicate_column THEN null; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE buses_v2 ADD COLUMN IF NOT EXISTS driver_incharge_phone VARCHAR(50) DEFAULT '';
+      EXCEPTION WHEN duplicate_column THEN null; END $$;
+
+      -- Add new columns to existing table if they don't exist
+      DO $$ BEGIN
+        ALTER TABLE fresher_resources ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'link';
+      EXCEPTION WHEN duplicate_column THEN null; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE fresher_resources ADD COLUMN IF NOT EXISTS content TEXT DEFAULT '';
+      EXCEPTION WHEN duplicate_column THEN null; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE fresher_resources ALTER COLUMN url DROP NOT NULL;
+      EXCEPTION WHEN others THEN null; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE fresher_resources DROP CONSTRAINT IF EXISTS fresher_resources_type_check;
+        ALTER TABLE fresher_resources ADD CONSTRAINT fresher_resources_type_check CHECK (type IN ('link', 'text', 'md'));
+      EXCEPTION WHEN others THEN null; END $$;
     `;
 
     await pool.query(sql);
 
-    return NextResponse.json({ success: true, message: 'All tables created: buses, papers_archive, qbank_questions, qbank_topics, qbank_question_topics' });
+    return NextResponse.json({ success: true, message: 'All tables created: buses, papers_archive, qbank_questions, qbank_topics, qbank_question_topics, fresher_resources, bus_routes, bus_stops, bus_placements, bus_students, transport_rules' });
   } catch (error: any) {
     console.error('Migration failed:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
@@ -209,7 +299,10 @@ export async function POST() {
  *                 error:
  *                   type: string
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const authResult = await requireAdminAuth(req);
+  if (authResult instanceof NextResponse) return authResult;
+
   try {
     const pool = getDbPool();
 
@@ -233,6 +326,6 @@ export async function GET() {
     });
   } catch (error: any) {
     console.error('DB check failed:', error);
-    return NextResponse.json({ connected: false, error: error.message });
+    return NextResponse.json({ connected: false, error: "Internal server error" });
   }
 }

@@ -11,6 +11,7 @@ const ChennaiClient: AxiosInstance = axios.create({
   },
   httpsAgent: agent,
   withCredentials: true,
+  timeout: 20000,
 });
 
 export default function VTOPClient(): AxiosInstance {

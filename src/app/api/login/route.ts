@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
+import { syncClubsBackground } from "@/lib/syncClubs";
 import VTOPClient from "@/lib/clients/VTOPClient";
 import { LoginRequestBody } from "@/types/data/login";
+import { checkRateLimit, rateLimitResponse, getClientIp } from "@/lib/rateLimit";
 
+import { getDbPool } from "@/lib/db";
+import { signClubToken } from "@/lib/clubAuth";
 import { getCaptcha } from "../login/captcha";
 import { solveCaptcha } from "../login/solveCaptcha";
 import * as cheerio from "cheerio";
@@ -44,6 +48,10 @@ import * as cheerio from "cheerio";
  */
 
 export async function POST(req: Request) {
+    const ip = getClientIp(req);
+    const rl = checkRateLimit(`login:${ip}`, 5, 60000);
+    if (!rl.allowed) return rateLimitResponse(rl.retryAfterMs);
+
     try {
         const {  username, password  } = await req.json().catch(()=>({}));
         const captchaRes = await getCaptcha();
@@ -110,8 +118,35 @@ export async function POST(req: Request) {
 
         const $ = cheerio.load(dashboardHtml);
         const new_csrf: any = $('input[name="_csrf"]').val();
-        const authorizedID: any =
+        let authorizedID: any =
             $('#authorizedID').val() || $('input[name="authorizedid"]').val();
+
+        if (!authorizedID) {
+            authorizedID = username.toUpperCase();
+        }
+
+        // Spawn background sync for VTOP Clubs so we always have the latest active list
+        syncClubsBackground(allCookies, new_csrf, authorizedID);
+
+        // Check if user is a club representative
+        let clubToken = undefined;
+        let clubRoles = [];
+        try {
+            const pool = getDbPool();
+            const { rows } = await pool.query(
+                'SELECT club_id, role FROM club_representatives WHERE vtop_id = $1',
+                [authorizedID]
+            );
+            
+            if (rows.length > 0) {
+                // Issue a token containing all the clubs they represent. 
+                // The frontend can pass 'x-club-id' header to select the club context dynamically.
+                clubToken = signClubToken(authorizedID, rows);
+                clubRoles = rows;
+            }
+        } catch (dbErr) {
+            console.error("Failed to fetch club roles for login:", dbErr);
+        }
 
         return NextResponse.json({
             success: true,
@@ -119,11 +154,13 @@ export async function POST(req: Request) {
             cookies: allCookies,
             csrf: new_csrf,
             authorizedID,
+            clubToken, // Will be undefined if not a rep
+            clubRoles, // Provide the roles they have
         }, { status: 200 });
 
     } catch (err: any) {
         console.error(err);
-        return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+        return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });
     }
 }
 

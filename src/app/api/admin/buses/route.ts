@@ -1,13 +1,51 @@
+/**
+ * @openapi
+ * /api/admin/buses:
+ *   post:
+ *     tags:
+ *       - Admin
+ *     summary: Auto-generated POST endpoint for /api/admin/buses
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               cookies:
+ *                 type: string
+ *               authorizedID:
+ *                 type: string
+ *               csrf:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Successful response
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               example:
+ *                 success: true
+ *                 message: "sample_value"
+ *       400:
+ *         description: Bad Request
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal Server Error
+ */
+
 import { NextResponse } from 'next/server';
 import { getDbPool } from '@/lib/db';
-import { cookies } from 'next/headers';
+import { requireAdminAuth } from '@/lib/auth';
 
 /**
  * @swagger
  * /api/admin/buses:
  *   post:
  *     summary: Update the list of buses
- *     description: Replaces the current buses list in the database with the provided array of buses. Requires admin authentication via cookies.
+ *     description: Replaces the current buses list in the database with the provided array of buses. Requires admin authentication via Bearer token.
  *     tags:
  *       - Admin
  *       - Buses
@@ -49,44 +87,13 @@ import { cookies } from 'next/headers';
  *         description: Internal server error or DATABASE_URL not configured
  */
 
-
-/**
- * @openapi
- * /api/admin/buses:
- *   post:
- *     tags:
- *       - Admin
- *     summary: POST endpoint for /api/admin/buses
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *     responses:
- *       200:
- *         description: Successful response
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *       400:
- *         description: Bad Request
- *       401:
- *         description: Unauthorized
- *       500:
- *         description: Internal Server Error
- */
-
 export async function POST(req: Request) {
-  try {
-    const cookieStore = await cookies();
-    const adminAuth = cookieStore.get('admin_auth');
-    
-    if (!adminAuth || adminAuth.value !== 'true') {
-      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
-    }
+  const authResult = await requireAdminAuth(req);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
 
+  try {
     if (!process.env.DATABASE_URL) {
       return NextResponse.json({ success: false, message: 'DATABASE_URL is not configured.' }, { status: 500 });
     }
@@ -146,6 +153,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, message: 'Buses updated successfully in the database.' });
   } catch (error: any) {
     console.error('Failed to update buses:', error);
-    return NextResponse.json({ success: false, message: error.message }, { status: 500 });
+    return NextResponse.json({ success: false, message: "Internal server error" }, { status: 500 });
   }
 }

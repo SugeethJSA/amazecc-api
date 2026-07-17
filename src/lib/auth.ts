@@ -1,6 +1,17 @@
 import crypto from 'crypto';
+import { NextResponse } from 'next/server';
 
-const SECRET = process.env.ADMIN_SECRET || 'fallback_secret_change_me_in_production';
+if (!process.env.ADMIN_SECRET) {
+  throw new Error('ADMIN_SECRET environment variable is required');
+}
+const SECRET = process.env.ADMIN_SECRET;
+
+export interface AdminTokenPayload {
+    username: string;
+    role: 'superadmin' | 'admin';
+    permissions: string[];
+    exp: number;
+}
 
 /**
  * Generates an HMAC SHA-256 signature for the given payload.
@@ -16,9 +27,11 @@ function generateSignature(payload: string): string {
  * Signs a username to create a secure admin token.
  * Format: base64(payload).signature
  */
-export function signAdminToken(username: string): string {
+export function signAdminToken(username: string, role: 'superadmin' | 'admin' = 'superadmin', permissions: string[] = ['dashboard', 'qbank', 'buses', 'push', 'fresher-resources', 'faculty-directories', 'users', 'transport']): string {
     const payloadObj = {
         username,
+        role,
+        permissions,
         exp: Date.now() + 1000 * 60 * 60 * 24 * 7 // 7 days expiration
     };
     
@@ -29,10 +42,10 @@ export function signAdminToken(username: string): string {
 }
 
 /**
- * Verifies a token and returns the username if valid and not expired.
+ * Verifies a token and returns the payload if valid and not expired.
  * Returns null if invalid or expired.
  */
-export function verifyAdminToken(token: string): string | null {
+export function verifyAdminToken(token: string): AdminTokenPayload | null {
     try {
         const parts = token.split('.');
         if (parts.length !== 2) return null;
@@ -57,17 +70,33 @@ export function verifyAdminToken(token: string): string | null {
             return null; // Token expired
         }
         
-        return payloadObj.username;
+        return payloadObj as AdminTokenPayload;
     } catch (err) {
         return null;
     }
 }
 
-import { cookies } from 'next/headers';
+export function getAdminTokenFromRequest(req: Request): string | null {
+    const authHeader = req.headers.get('Authorization');
+    if (authHeader?.startsWith('Bearer ')) {
+        return authHeader.slice(7);
+    }
+    return null;
+}
 
-export async function isAdminAuthenticated(): Promise<boolean> {
-    const cookieStore = await cookies();
-    const token = cookieStore.get('admin_token')?.value;
-    if (!token) return false;
-    return verifyAdminToken(token) !== null;
+export async function verifyAdminFromRequest(req: Request): Promise<AdminTokenPayload | null> {
+    const token = getAdminTokenFromRequest(req);
+    if (token) {
+        return verifyAdminToken(token);
+    }
+    return null;
+}
+
+export async function requireAdminAuth(req: Promise<Request> | Request): Promise<{ username: string; role: 'superadmin' | 'admin'; permissions: string[] } | NextResponse> {
+    const request = await req;
+    const payload = await verifyAdminFromRequest(request);
+    if (!payload) {
+        return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+    }
+    return { username: payload.username, role: payload.role, permissions: payload.permissions };
 }

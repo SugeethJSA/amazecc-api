@@ -36,25 +36,3 @@ export async function DeleteFromS3(key: string): Promise<void> {
     })
   );
 }
-
-export async function StreamFileFromS3(key: string, res: any, filename: string): Promise<void> {
-  try {
-    const command = new GetObjectCommand({
-      Bucket: process.env.B2_BUCKET_NAME!,
-      Key: key,
-    });
-    const data = await s3.send(command);
-
-    if(!data.Body) {
-      return res.status(404).json({ error: "File not found in storage" });
-    }
-
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Type', data.ContentType || 'application/octet-stream');
-
-    (data.Body as any).pipe(res);
-  } catch (error) {
-    console.error("Error streaming file from S3:", error);
-    res.status(500).json({ error: "Failed to stream file" });
-  }
-}

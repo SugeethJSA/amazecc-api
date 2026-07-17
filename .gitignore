@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+Eventhub_scrapper_modals/
+git-filter-repo.py
